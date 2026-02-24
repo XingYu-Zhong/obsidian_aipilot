@@ -1,7 +1,7 @@
 import { minimatch } from 'minimatch';
 import { MarkdownView } from 'obsidian';
 import TextComplete from 'src/main';
-import { APIClient } from '..';
+import { APIClient, SuggestionTask } from '..';
 
 export class IgnoredFilter implements APIClient {
 	constructor(
@@ -9,7 +9,11 @@ export class IgnoredFilter implements APIClient {
 		private readonly plugin: TextComplete,
 	) {}
 
-	async fetchCompletions(prefix: string, suffix: string) {
+	async fetchCompletions(
+		prefix: string,
+		suffix: string,
+		task?: SuggestionTask,
+	) {
 		const { settings } = this.plugin;
 
 		const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
@@ -30,7 +34,7 @@ export class IgnoredFilter implements APIClient {
 			return undefined;
 		}
 
-		return this.client.fetchCompletions(prefix, suffix);
+		return this.client.fetchCompletions(prefix, suffix, task);
 	}
 
 	testConnection() {

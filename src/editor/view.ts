@@ -39,13 +39,18 @@ class CompletionsRenderPluginValue implements PluginValue {
 			return;
 		}
 
-		const decoration = Decoration.widget({
+		const widget = Decoration.widget({
 			widget: new CompletionsWidget(completionsState.completions),
 			side: 1,
 		});
-		this.decorations = Decoration.set([
-			decoration.range(state.selection.main.head),
-		]);
+		const ranges = [widget.range(state.selection.main.head)];
+		if (completionsState.replaceLength > 0) {
+			const from = state.selection.main.head;
+			const to = Math.min(from + completionsState.replaceLength, state.doc.length);
+			const strike = Decoration.mark({ class: 'textcomplete-replace-target' });
+			ranges.push(strike.range(from, to));
+		}
+		this.decorations = Decoration.set(ranges, true);
 	}
 }
 

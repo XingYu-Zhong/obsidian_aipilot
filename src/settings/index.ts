@@ -12,6 +12,10 @@ import TextComplete from '../main';
 
 export const DEFAULT_SETTINGS: TextCompleteSettings = {
 	version: '0.1.0',
+	connectionValidation: {
+		lastSuccessfulProvider: undefined,
+		lastSuccessfulModel: undefined,
+	},
 	providers: {
 		openai: {
 			apiKey: undefined,
@@ -33,6 +37,10 @@ export const DEFAULT_SETTINGS: TextCompleteSettings = {
 			apiKey: undefined,
 			baseUrl: undefined,
 		},
+		xai: {
+			apiKey: undefined,
+			baseUrl: undefined,
+		},
 		zenmux: {
 			apiKey: undefined,
 			baseUrl: 'https://zenmux.ai/api/v1',
@@ -50,6 +58,7 @@ export const DEFAULT_SETTINGS: TextCompleteSettings = {
 		temperature: 0,
 		waitTime: 500,
 		windowSize: 512,
+		replaceWindowSize: 24,
 		acceptKey: 'Tab',
 		rejectKey: 'Escape',
 		ignoredFiles: [],
@@ -67,8 +76,11 @@ export function normalizeSettings(
 	data: Partial<TextCompleteSettings> | null,
 ): TextCompleteSettings {
 	if (data == null) {
-		return {
+	return {
 			...DEFAULT_SETTINGS,
+			connectionValidation: {
+				...DEFAULT_SETTINGS.connectionValidation,
+			},
 			providers: {
 				...DEFAULT_SETTINGS.providers,
 				openai: { ...DEFAULT_SETTINGS.providers.openai },
@@ -76,6 +88,7 @@ export function normalizeSettings(
 				google: { ...DEFAULT_SETTINGS.providers.google },
 				mistral: { ...DEFAULT_SETTINGS.providers.mistral },
 				deepseek: { ...DEFAULT_SETTINGS.providers.deepseek },
+				xai: { ...DEFAULT_SETTINGS.providers.xai },
 				zenmux: { ...DEFAULT_SETTINGS.providers.zenmux },
 				customOpenAI: { ...DEFAULT_SETTINGS.providers.customOpenAI },
 			},
@@ -98,6 +111,14 @@ export function normalizeSettings(
 
 	return {
 		version: data.version ?? DEFAULT_SETTINGS.version,
+		connectionValidation: {
+			lastSuccessfulProvider:
+				data.connectionValidation?.lastSuccessfulProvider ??
+				DEFAULT_SETTINGS.connectionValidation.lastSuccessfulProvider,
+			lastSuccessfulModel:
+				data.connectionValidation?.lastSuccessfulModel ??
+				DEFAULT_SETTINGS.connectionValidation.lastSuccessfulModel,
+		},
 		providers: {
 			openai: {
 				apiKey: data.providers?.openai?.apiKey,
@@ -118,6 +139,10 @@ export function normalizeSettings(
 			deepseek: {
 				apiKey: data.providers?.deepseek?.apiKey,
 				baseUrl: data.providers?.deepseek?.baseUrl,
+			},
+			xai: {
+				apiKey: data.providers?.xai?.apiKey,
+				baseUrl: data.providers?.xai?.baseUrl,
 			},
 			zenmux: {
 				apiKey: data.providers?.zenmux?.apiKey,
@@ -143,6 +168,9 @@ export function normalizeSettings(
 				data.completions?.waitTime ?? DEFAULT_SETTINGS.completions.waitTime,
 			windowSize:
 				data.completions?.windowSize ?? DEFAULT_SETTINGS.completions.windowSize,
+			replaceWindowSize:
+				data.completions?.replaceWindowSize ??
+				DEFAULT_SETTINGS.completions.replaceWindowSize,
 			acceptKey:
 				data.completions?.acceptKey ?? DEFAULT_SETTINGS.completions.acceptKey,
 			rejectKey:
@@ -176,7 +204,8 @@ const MODEL_PLACEHOLDERS: Record<Provider, string> = {
 	google: 'e.g. gemini-2.5-flash',
 	mistral: 'e.g. mistral-small-latest',
 	deepseek: 'e.g. deepseek-chat',
-	zenmux: 'e.g. stepfun/step-3.5-flash',
+	xai: 'e.g. grok-4-1-fast-non-reasoning',
+	zenmux: 'e.g. x-ai/grok-4.1-fast-non-reasoning',
 	'custom-openai': 'e.g. llama3.1:8b-instruct-q4_K_M',
 };
 
@@ -186,6 +215,7 @@ const API_KEY_PLACEHOLDERS: Record<Provider, string> = {
 	google: 'AIza...',
 	mistral: '...',
 	deepseek: '...',
+	xai: 'xai-...',
 	zenmux: '...',
 	'custom-openai': '...',
 };
@@ -196,6 +226,7 @@ const BASE_URL_PLACEHOLDERS: Partial<Record<Provider, string>> = {
 	google: 'https://generativelanguage.googleapis.com/v1beta',
 	mistral: 'https://api.mistral.ai/v1',
 	deepseek: 'https://api.deepseek.com/v1',
+	xai: 'https://api.x.ai/v1',
 	zenmux: 'https://zenmux.ai/api/v1',
 	'custom-openai': 'http://127.0.0.1:11434/v1',
 };
@@ -212,6 +243,8 @@ function getProviderConfig(settings: TextCompleteSettings, provider: Provider) {
 			return settings.providers.mistral;
 		case 'deepseek':
 			return settings.providers.deepseek;
+		case 'xai':
+			return settings.providers.xai;
 		case 'zenmux':
 			return settings.providers.zenmux;
 		case 'custom-openai':
@@ -233,7 +266,55 @@ export class TextCompleteSettingTab extends PluginSettingTab {
 
 		const { settings } = this.plugin;
 
-		new Setting(containerEl).setName('AI Provider').setHeading();
+		new Setting(containerEl).setName('Inline Completions').setHeading();
+
+		new Setting(containerEl)
+			.setName('Enable inline completions')
+			.setDesc('Enable only after Test Connection passes for current provider/model.')
+			.addToggle((toggle) =>
+				toggle.setValue(settings.completions.enabled).onChange(async (value) => {
+					if (value && !this.plugin.canEnableCompletions()) {
+						toggle.setValue(false);
+						new Notice(
+							'Please pass Test Connection for the current provider/model before enabling inline completions.',
+						);
+						return;
+					}
+					settings.completions.enabled = value;
+					await this.saveAndRefreshEditor();
+				}),
+			)
+			.addButton((button) =>
+				button.setButtonText('Test Connection').onClick(async () => {
+					const provider = settings.completions.provider;
+					const providerConfig = getProviderConfig(settings, provider);
+					if (isBlank(settings.completions.model)) {
+						new Notice('Connection failed: model id is empty.');
+						return;
+					}
+					if (provider !== 'custom-openai' && isBlank(providerConfig.apiKey)) {
+						new Notice('Connection failed: API key is empty.');
+						return;
+					}
+					const client = this.plugin.createAPIClient();
+					const result = await client.testConnection();
+					const detailText = result.details ? `\n${result.details}` : '';
+					if (result.ok) {
+						settings.connectionValidation.lastSuccessfulProvider =
+							settings.completions.provider;
+						settings.connectionValidation.lastSuccessfulModel =
+							settings.completions.model;
+						await this.saveAndRefreshClient();
+					}
+					new Notice(
+						result.ok
+							? 'Connection successful.'
+							: `Connection failed: ${result.error ?? 'Please check API key/model/provider.'}${detailText}`,
+					);
+				}),
+			);
+
+		new Setting(containerEl).setName('Completion AI Provider').setHeading();
 
 		new Setting(containerEl)
 			.setName('Provider')
@@ -245,6 +326,7 @@ export class TextCompleteSettingTab extends PluginSettingTab {
 				dropdown.setValue(settings.completions.provider).onChange(async (value) => {
 					settings.completions.provider = value as Provider;
 					settings.completions.model = DEFAULT_MODELS[settings.completions.provider];
+					settings.completions.enabled = false;
 					await this.saveAndRefreshClient();
 					this.display();
 				});
@@ -294,55 +376,20 @@ export class TextCompleteSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Test current completion model')
-			.setDesc('Uses current completions provider + model settings.')
-			.addButton((button) =>
-				button.setButtonText('Test Connection').onClick(async () => {
-					const provider = settings.completions.provider;
-					const providerConfig = getProviderConfig(settings, provider);
-					if (isBlank(settings.completions.model)) {
-						new Notice('Connection failed: model id is empty.');
-						return;
-					}
-					if (provider !== 'custom-openai' && isBlank(providerConfig.apiKey)) {
-						new Notice('Connection failed: API key is empty.');
-						return;
-					}
-					const client = this.plugin.createAPIClient();
-					const result = await client.testConnection();
-					const detailText = result.details ? `\n${result.details}` : '';
-					new Notice(
-						result.ok
-							? 'Connection successful.'
-							: `Connection failed: ${result.error ?? 'Please check API key/model/provider.'}${detailText}`,
-					);
-				}),
-			);
-
-		new Setting(containerEl).setName('Inline Completions').setHeading();
-
-		new Setting(containerEl)
-			.setName('Enable inline completions')
-			.addToggle((toggle) =>
-				toggle.setValue(settings.completions.enabled).onChange(async (value) => {
-					settings.completions.enabled = value;
-					await this.saveAndRefreshEditor();
-				}),
-			);
-
-		new Setting(containerEl)
 			.setName('Role Play (system prompt)')
 			.setDesc(
 				'Define assistant role for completion behavior. Leave empty to use default.',
 			)
-			.addTextArea((text) =>
-				text
-					.setValue(settings.prompts.rolePlay)
-					.onChange(async (value) => {
-						settings.prompts.rolePlay = value;
-						await this.saveAndRefreshClient();
-					}),
-			)
+			.addTextArea((text) => {
+				text.inputEl.rows = 10;
+				text.inputEl.style.width = '100%';
+				text.inputEl.style.maxWidth = '120px';
+				text.inputEl.style.minWidth = '50px';
+				text.setValue(settings.prompts.rolePlay).onChange(async (value) => {
+					settings.prompts.rolePlay = value;
+					await this.saveAndRefreshClient();
+				});
+			})
 			.addButton((button) =>
 				button.setButtonText('Reset Default').onClick(async () => {
 					settings.prompts.rolePlay = DEFAULT_ROLE_PLAY;
@@ -379,15 +426,19 @@ export class TextCompleteSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Wait time (ms)')
-			.setDesc('Delay before requesting completion after typing.')
+			.setName('Wait time (seconds)')
+			.setDesc('Delay in seconds before requesting completion after typing.')
 			.addText((text) =>
 				text
-					.setValue(String(settings.completions.waitTime))
+					.setValue(String(settings.completions.waitTime / 1000))
 					.onChange(async (value) => {
-						settings.completions.waitTime = parseNumber(
+						const waitSeconds = parseNumber(
 							value,
-							DEFAULT_SETTINGS.completions.waitTime,
+							DEFAULT_SETTINGS.completions.waitTime / 1000,
+						);
+						settings.completions.waitTime = Math.max(
+							0,
+							Math.round(waitSeconds * 1000),
 						);
 						await this.saveAndRefreshEditor();
 					}),
@@ -405,6 +456,21 @@ export class TextCompleteSettingTab extends PluginSettingTab {
 							DEFAULT_SETTINGS.completions.windowSize,
 						);
 						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Replace window size')
+			.setDesc('Maximum number of chars after cursor that inline replace may overwrite.')
+			.addText((text) =>
+				text
+					.setValue(String(settings.completions.replaceWindowSize))
+					.onChange(async (value) => {
+						settings.completions.replaceWindowSize = parseNumber(
+							value,
+							DEFAULT_SETTINGS.completions.replaceWindowSize,
+						);
+						await this.saveAndRefreshClient();
 					}),
 			);
 

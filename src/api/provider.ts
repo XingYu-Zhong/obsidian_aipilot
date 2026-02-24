@@ -6,6 +6,7 @@ export const PROVIDERS = [
 	'google',
 	'mistral',
 	'deepseek',
+	'xai',
 	'zenmux',
 	'custom-openai',
 ] as const;
@@ -18,6 +19,7 @@ export const PROVIDERS_NAMES: Record<Provider, string> = {
 	google: 'Google',
 	mistral: 'Mistral',
 	deepseek: 'DeepSeek',
+	xai: 'xAI',
 	zenmux: 'Zenmux',
 	'custom-openai': 'Custom OpenAI-Compatible',
 };
@@ -28,7 +30,8 @@ export const PROVIDER_MODELS: Record<Provider, string[]> = {
 	google: ['gemini-2.5-flash', 'gemini-2.5-pro'],
 	mistral: ['mistral-small-latest', 'mistral-large-latest'],
 	deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-	zenmux: ['stepfun/step-3.5-flash', 'google/gemini-3-flash-preview'],
+	xai: ['grok-4-1-fast-non-reasoning', 'grok-3-beta'],
+	zenmux: ['x-ai/grok-4.1-fast-non-reasoning', 'google/gemini-3-flash-preview'],
 	'custom-openai': ['gpt-4o-mini'],
 };
 
@@ -40,6 +43,7 @@ export const DEFAULT_MODELS: Record<Provider, string> = {
 	google: PROVIDER_MODELS.google[0],
 	mistral: PROVIDER_MODELS.mistral[0],
 	deepseek: PROVIDER_MODELS.deepseek[0],
+	xai: PROVIDER_MODELS.xai[0],
 	zenmux: PROVIDER_MODELS.zenmux[0],
 	'custom-openai': PROVIDER_MODELS['custom-openai'][0],
 };
@@ -64,6 +68,8 @@ export function resolveModel(settings: TextCompleteSettings) {
 	const mistralModule = require('@ai-sdk/mistral');
 	// eslint-disable-next-line @typescript-eslint/no-var-requires
 	const deepseekModule = require('@ai-sdk/deepseek');
+	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	const xaiModule = require('@ai-sdk/xai');
 
 	switch (provider) {
 		case 'openai': {
@@ -113,6 +119,15 @@ export function resolveModel(settings: TextCompleteSettings) {
 				return instance(modelId);
 			}
 			return deepseekModule.deepseek(modelId);
+		}
+		case 'xai': {
+			const apiKey = trimOrUndefined(settings.providers.xai.apiKey);
+			const baseURL = trimOrUndefined(settings.providers.xai.baseUrl);
+			if (xaiModule.createXai) {
+				const instance = xaiModule.createXai({ apiKey, baseURL });
+				return instance(modelId);
+			}
+			return xaiModule.xai(modelId);
 		}
 		case 'zenmux': {
 			const apiKey = trimOrUndefined(settings.providers.zenmux.apiKey);

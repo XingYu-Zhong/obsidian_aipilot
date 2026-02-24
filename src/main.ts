@@ -1,11 +1,12 @@
 import { Extension } from '@codemirror/state';
 import { Notice, Plugin } from 'obsidian';
-import { APIClient } from './api';
+import { APIClient, SuggestionTask } from './api';
 import { AISDKClient } from './api/client';
 import { PromptGenerator } from './api/prompts/generator';
 import { IgnoredFilter } from './api/proxies/ignored-filter';
 import { MemoryCacheProxy } from './api/proxies/memory-cache';
 import { inlineCompletionsExtension } from './editor/extension';
+import { replaceSelectedTermInCurrentParagraph } from './editor/text-edit';
 import {
 	DEFAULT_SETTINGS,
 	normalizeSettings,
@@ -36,6 +37,12 @@ export default class TextComplete extends Plugin {
 			'bot',
 			'Toggle inline completions',
 			async () => {
+				if (!this.settings.completions.enabled && !this.canEnableCompletions()) {
+					new Notice(
+						'Please pass Test Connection for the current provider/model before enabling inline completions.',
+					);
+					return;
+				}
 				this.settings.completions.enabled = !this.settings.completions.enabled;
 				await this.saveSettings();
 				new Notice(
@@ -50,6 +57,12 @@ export default class TextComplete extends Plugin {
 			id: 'enable-completions',
 			name: 'Enable inline completions',
 			callback: async () => {
+				if (!this.canEnableCompletions()) {
+					new Notice(
+						'Please pass Test Connection for the current provider/model before enabling inline completions.',
+					);
+					return;
+				}
 				this.settings.completions.enabled = true;
 				await this.saveSettings();
 				new Notice('Inline completions enabled.');
@@ -70,10 +83,28 @@ export default class TextComplete extends Plugin {
 			id: 'toggle-completions',
 			name: 'Toggle inline completions',
 			callback: async () => {
+				if (!this.settings.completions.enabled && !this.canEnableCompletions()) {
+					new Notice(
+						'Please pass Test Connection for the current provider/model before enabling inline completions.',
+					);
+					return;
+				}
 				this.settings.completions.enabled = !this.settings.completions.enabled;
 				await this.saveSettings();
 				new Notice(
 					`Inline completions ${this.settings.completions.enabled ? 'enabled' : 'disabled'}.`,
+				);
+			},
+		});
+
+		this.addCommand({
+			id: 'replace-selected-term-in-current-paragraph',
+			name: 'Text edit: edit selected text (AI)',
+			editorCallback: (editor) => {
+				replaceSelectedTermInCurrentParagraph(
+					this.app,
+					editor,
+					this.completionsClient,
 				);
 			},
 		});
@@ -122,11 +153,15 @@ export default class TextComplete extends Plugin {
 	}
 
 	createEditorExtension() {
-		const fetcher = async (prefix: string, suffix: string) => {
+		const fetcher = async (
+			prefix: string,
+			suffix: string,
+			task?: SuggestionTask,
+		) => {
 			if (!this.settings.completions.enabled) {
 				return undefined;
 			}
-			return this.completionsClient.fetchCompletions(prefix, suffix);
+			return this.completionsClient.fetchCompletions(prefix, suffix, task);
 		};
 		const { debounced, cancel, force } = debounceAsyncFunc(
 			fetcher,
@@ -152,5 +187,14 @@ export default class TextComplete extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	canEnableCompletions(): boolean {
+		return (
+			this.settings.connectionValidation.lastSuccessfulProvider ===
+				this.settings.completions.provider &&
+			this.settings.connectionValidation.lastSuccessfulModel ===
+				this.settings.completions.model
+		);
 	}
 }

@@ -1,4 +1,5 @@
 import TextComplete from 'src/main';
+import { InlineSuggestion, SuggestionTask } from 'src/api';
 import {
 	acceptCompletionsOnKeydown,
 	rejectCompletionsOnKeydown,
@@ -10,7 +11,8 @@ import { completionsRenderPlugin } from './view';
 export type CompletionsFetcher = (
 	prefix: string,
 	suffix: string,
-) => Promise<string | undefined>;
+	task?: SuggestionTask,
+) => Promise<InlineSuggestion | undefined>;
 
 export type CompletionsCancel = () => void;
 export type CompletionsForce = () => void;

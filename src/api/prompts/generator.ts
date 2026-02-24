@@ -1,4 +1,5 @@
 import TextComplete from 'src/main';
+import { SuggestionTask } from '..';
 import { BLOCK_QUOTE_PROMPT } from './completions/block-quote';
 import { CODE_BLOCK_PROMPT } from './completions/code-block';
 import { HEADING_PROMPT } from './completions/heading';
@@ -19,20 +20,40 @@ const COMPLETIONS_SYSTEM_PROMPTS: Record<Context, string> = {
 
 const OUTPUT_PROTOCOL = [
 	'OUTPUT PROTOCOL:',
-	'1) Return only the insertion text.',
-	'2) Do NOT output wrappers/tags such as <INSERT>, </INSERT>, <LANGUAGE>, <THOUGHT>.',
-	'3) Do NOT explain your reasoning.',
-	'4) The insertion point is exactly the boundary between PREFIX and SUFFIX.',
-	'5) Do NOT repeat trailing PREFIX or leading SUFFIX text.',
-	'6) If context_type is list-item, preserve the existing list style and indentation.',
+	'1) Return a JSON object only, without markdown/code fences.',
+	'2) JSON schema: {"replace": number, "text": string}.',
+	'3) replace means how many characters to replace from the beginning of EDIT_TARGET_SUFFIX.',
+	'4) replace must be between 0 and MAX_REPLACE_CHARS.',
+	'5) text is the final replacement text to insert at cursor.',
+	'6) If no replacement is needed, use replace=0 and provide normal continuation in text.',
+	'7) Do NOT output wrappers/tags such as <INSERT>, </INSERT>, <LANGUAGE>, <THOUGHT>.',
+	'8) Do NOT explain your reasoning.',
+	'9) The insertion point is exactly the boundary between PREFIX and SUFFIX.',
+	'10) Do NOT repeat trailing PREFIX or leading SUFFIX text.',
+	'11) If context_type is list-item, preserve the existing list style and indentation.',
+	'12) If context_type is list-item, each new item must start on its own new line.',
 ].join('\n');
 
 const INPUT_SCHEMA = [
 	'INPUT SCHEMA:',
+	'- edit_instruction: optional, when present indicates edit intent',
+	'- recent_edits: recent user edits in the last ~2 seconds',
 	'- context_type: markdown structural context at cursor',
 	'- language_hint: language to follow (for code blocks)',
 	'- prefix: full text before cursor (truncated window)',
 	'- suffix: full text after cursor (truncated window)',
+].join('\n');
+
+const TASK_PROTOCOL = [
+	'TASK PROTOCOL:',
+	'- First decide mode automatically:',
+	'- Use EDIT MODE when edit_instruction is non-empty, or when a short replacement in EDIT_TARGET_SUFFIX is clearly needed.',
+	'- Otherwise use COMPLETION MODE.',
+	'- Use recent_edits as high-priority evidence of user intent and writing direction.',
+	'- In COMPLETION MODE: continue naturally from cursor and usually set replace=0.',
+	'- In EDIT MODE: follow edit_instruction and edit within EDIT_TARGET_SUFFIX.',
+	'- In EDIT MODE: replace should normally equal MAX_REPLACE_CHARS.',
+	'- In EDIT MODE: preserve unaffected context and output only edited replacement text.',
 ].join('\n');
 
 function stripLegacyFormatInstructions(system: string): string {
@@ -69,19 +90,37 @@ function removeMetaHintLines(value: string): string {
 }
 
 function buildInputBlock(params: {
+	task: SuggestionTask;
 	context: Context;
 	languageHint: string;
 	prefix: string;
 	suffix: string;
+	editTargetSuffix: string;
+	maxReplaceChars: number;
 	listStyleHint?: string;
 	listMarkerHint?: string;
 }): string {
-	const parts = [
+	const instruction = params.task.instruction?.trim() ?? '';
+	const recentEdits = params.task.recentEdits?.trim() ?? '';
+	const parts: string[] = [];
+
+	parts.push(
+		'edit_instruction:',
+		'<<<EDIT_INSTRUCTION',
+		instruction,
+		'EDIT_INSTRUCTION',
+		'recent_edits:',
+		'<<<RECENT_EDITS',
+		recentEdits,
+		'RECENT_EDITS',
+	);
+
+	parts.push(
 		'context_type:',
 		params.context,
 		'language_hint:',
 		params.languageHint,
-	];
+	);
 
 	if (params.listStyleHint !== undefined) {
 		parts.push('list_style_hint:', params.listStyleHint);
@@ -89,6 +128,7 @@ function buildInputBlock(params: {
 	if (params.listMarkerHint !== undefined) {
 		parts.push('list_marker_hint:', params.listMarkerHint);
 	}
+	parts.push('max_replace_chars:', String(params.maxReplaceChars));
 
 	parts.push(
 		'prefix:',
@@ -99,6 +139,10 @@ function buildInputBlock(params: {
 		'<<<SUFFIX',
 		params.suffix,
 		'SUFFIX',
+		'edit_target_suffix:',
+		'<<<EDIT_TARGET_SUFFIX',
+		params.editTargetSuffix,
+		'EDIT_TARGET_SUFFIX',
 	);
 
 	return parts.join('\n');
@@ -141,7 +185,11 @@ function inferListHints(prefix: string): {
 export class PromptGenerator {
 	constructor(private readonly plugin: TextComplete) {}
 
-	generateCompletionsPrompt(prefix: string, suffix: string) {
+	generateCompletionsPrompt(
+		prefix: string,
+		suffix: string,
+		task: SuggestionTask = {},
+	) {
 		const { settings } = this.plugin;
 
 		const context = getContext(prefix, suffix);
@@ -154,20 +202,33 @@ export class PromptGenerator {
 				: COMPLETIONS_SYSTEM_PROMPTS[context],
 		);
 
-		const windowSize = settings.completions.windowSize;
+		const configuredMaxReplaceChars = Math.max(
+			0,
+			settings.completions.replaceWindowSize,
+		);
+		const requestedMaxReplaceChars = task.maxReplaceChars ?? configuredMaxReplaceChars;
+		const maxReplaceChars = Math.max(0, Math.floor(requestedMaxReplaceChars));
+
+		const halfWindow = Math.max(1, Math.floor(settings.completions.windowSize / 2));
+		const promptWindow = Math.max(halfWindow, maxReplaceChars);
 		const truncatedPrefix = prefix.slice(
-			Math.max(0, prefix.length - windowSize / 2),
+			Math.max(0, prefix.length - promptWindow),
 			prefix.length,
 		);
-		const truncatedSuffix = suffix.slice(0, windowSize / 2);
+		const truncatedSuffix = suffix.slice(0, promptWindow);
 		const languageHint = context === 'code-block' ? getLanguage(prefix, suffix) : 'auto';
 		const listHints = context === 'list-item' ? inferListHints(prefix) : {};
+		const boundedMaxReplaceChars = Math.min(maxReplaceChars, truncatedSuffix.length);
+		const editTargetSuffix = truncatedSuffix.slice(0, boundedMaxReplaceChars);
 
 		const taskInput = buildInputBlock({
+			task,
 			context,
 			languageHint,
 			prefix: truncatedPrefix,
 			suffix: truncatedSuffix,
+			editTargetSuffix,
+			maxReplaceChars: boundedMaxReplaceChars,
 			listStyleHint: listHints.listStyleHint,
 			listMarkerHint: listHints.listMarkerHint,
 		});
@@ -179,9 +240,10 @@ export class PromptGenerator {
 			legacyContextGuideline,
 			OUTPUT_PROTOCOL,
 			INPUT_SCHEMA,
+			TASK_PROTOCOL,
 			'TASK INPUT:',
 			taskInput,
-			'Now return only the insertion text.',
+			'Now return JSON only.',
 		]
 			.filter((part) => part !== '')
 			.join('\n\n');

@@ -38,6 +38,7 @@
     "@ai-sdk/google": "^3.0.30",
     "@ai-sdk/mistral": "^3.0.20",
     "@ai-sdk/openai": "^3.0.31",
+    "@ai-sdk/xai": "^3.0.57",
     "@codemirror/state": "^6.4.1",
     "@codemirror/view": "^6.26.0",
     "ai": "^6.0.97",

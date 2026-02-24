@@ -1,7 +1,12 @@
 import { generateText } from 'ai';
 import { Notice, requestUrl } from 'obsidian';
 import TextComplete from 'src/main';
-import { APIClient, ConnectionResult } from '.';
+import {
+	APIClient,
+	ConnectionResult,
+	InlineSuggestion,
+	SuggestionTask,
+} from '.';
 import { getContext } from './prompts/context';
 import { PromptGenerator } from './prompts/generator';
 import { Provider, resolveModel } from './provider';
@@ -140,7 +145,11 @@ function normalizeListCompletion(text: string, style: ListStyle): string {
 			return line;
 		}
 
-		const content = listLike[4];
+		let content = listLike[4];
+		// Convert "- 7. item" into "item" before re-numbering ordered lists.
+		if (style.kind === 'ordered') {
+			content = content.replace(/^\d+\.\s+/, '');
+		}
 		switch (style.kind) {
 			case 'ordered': {
 				const next = `${style.indent}${orderedCounter}. ${content}`;
@@ -155,6 +164,14 @@ function normalizeListCompletion(text: string, style: ListStyle): string {
 	});
 
 	return normalized.join('\n');
+}
+
+function normalizeListLineBreaks(text: string): string {
+	let normalized = text.replace(/\r\n/g, '\n');
+	// Split accidental inline list starts after sentence punctuation.
+	normalized = normalized.replace(/([。！？.!?；;：:])\s*(\d+\.\s+)/g, '$1\n$2');
+	normalized = normalized.replace(/([。！？.!?；;：:])\s*([-*+]\s+)/g, '$1\n$2');
+	return normalized;
 }
 
 function normalizeCompletionByContext(
@@ -182,8 +199,15 @@ function normalizeCompletionByContext(
 	}
 
 	if (context === 'list-item') {
+		normalized = normalizeListLineBreaks(normalized);
 		const style = inferListStyle(prefix);
 		if (style !== undefined) {
+			const prefixEndsWithNewline = /\n[ \t]*$/.test(prefix);
+			const startsWithListMarker = /^[ \t]*(?:\d+\.\s+|[-*+]\s+(?:\[[ xX]\]\s+)?)/
+				.test(normalized);
+			if (!prefixEndsWithNewline && startsWithListMarker) {
+				normalized = `\n${normalized}`;
+			}
 			normalized = normalizeListCompletion(normalized, style);
 		}
 	}
@@ -195,6 +219,50 @@ function finalizeCompletionText(text: string, prefix: string, suffix: string): s
 	const contextual = normalizeCompletionByContext(text, prefix, suffix);
 	const deOverlapped = trimByCursorBoundary(contextual, prefix, suffix);
 	return deOverlapped;
+}
+
+function parseSuggestionPayload(
+	raw: string,
+	maxReplaceChars: number,
+	parsePlainText: (content: string) => string,
+): InlineSuggestion {
+	const unfenced = raw.replace(/^```[\w-]*\n?/, '').replace(/\n?```\s*$/, '').trim();
+	const jsonMatch = unfenced.match(/\{[\s\S]*\}/);
+	if (jsonMatch !== null) {
+		try {
+			const payload = JSON.parse(jsonMatch[0]) as {
+				replace?: unknown;
+				text?: unknown;
+			};
+			const replaceRaw = Number(payload.replace ?? 0);
+			const replaceLength = Number.isFinite(replaceRaw)
+				? Math.max(0, Math.min(maxReplaceChars, Math.floor(replaceRaw)))
+				: 0;
+			const text = typeof payload.text === 'string' ? payload.text : '';
+			return { text, replaceLength };
+		} catch {
+			// Fall through to plain text parser.
+		}
+	}
+
+	return {
+		text: parsePlainText(raw),
+		replaceLength: 0,
+	};
+}
+
+function resolveMaxReplaceChars(
+	settings: TextCompleteSettings,
+	task: SuggestionTask | undefined,
+	suffix: string,
+): number {
+	if (task?.maxReplaceChars != null) {
+		return Math.max(0, Math.min(Math.floor(task.maxReplaceChars), suffix.length));
+	}
+	return Math.max(
+		0,
+		Math.min(Math.floor(settings.completions.replaceWindowSize), suffix.length),
+	);
 }
 
 function getProviderConfig(settings: TextCompleteSettings, provider: Provider) {
@@ -209,6 +277,8 @@ function getProviderConfig(settings: TextCompleteSettings, provider: Provider) {
 			return settings.providers.mistral;
 		case 'deepseek':
 			return settings.providers.deepseek;
+		case 'xai':
+			return settings.providers.xai;
 		case 'zenmux':
 			return settings.providers.zenmux;
 		case 'custom-openai':
@@ -261,22 +331,41 @@ export class AISDKClient implements APIClient {
 		private readonly plugin: TextComplete,
 	) {}
 
-	async fetchCompletions(prefix: string, suffix: string) {
+	async fetchCompletions(
+		prefix: string,
+		suffix: string,
+		task?: SuggestionTask,
+	) {
 		const { settings } = this.plugin;
+		const maxReplaceChars = resolveMaxReplaceChars(settings, task, suffix);
 
 		try {
-			const prompt = this.generator.generateCompletionsPrompt(prefix, suffix);
+			const prompt = this.generator.generateCompletionsPrompt(prefix, suffix, task);
 			if (settings.completions.provider === 'zenmux') {
 				const result = await this.requestZenmuxChat(prompt, {
 					maxTokens: settings.completions.maxTokens,
 					temperature: settings.completions.temperature,
 				});
-				const parsed = finalizeCompletionText(
-					this.generator.parseResponse(result.text),
-					prefix,
-					suffix,
+				const parsedPayload = parseSuggestionPayload(
+					result.text,
+					maxReplaceChars,
+					(content) => this.generator.parseResponse(content),
 				);
-				return parsed.trim().length > 0 ? parsed : undefined;
+				const replaceLength = Math.min(
+					parsedPayload.replaceLength,
+					maxReplaceChars,
+					suffix.length,
+				);
+				const effectiveSuffix = suffix.slice(replaceLength);
+				const parsedText = finalizeCompletionText(
+					parsedPayload.text,
+					prefix,
+					effectiveSuffix,
+				);
+				if (parsedText.trim().length === 0 && replaceLength === 0) {
+					return undefined;
+				}
+				return { text: parsedText, replaceLength };
 			}
 
 			const model = resolveModel(settings);
@@ -289,12 +378,26 @@ export class AISDKClient implements APIClient {
 				stopSequences: ['\n\n\n'],
 			});
 
-			const parsed = finalizeCompletionText(
-				this.generator.parseResponse(text),
-				prefix,
-				suffix,
+			const parsedPayload = parseSuggestionPayload(
+				text,
+				maxReplaceChars,
+				(content) => this.generator.parseResponse(content),
 			);
-			return parsed.trim().length > 0 ? parsed : undefined;
+			const replaceLength = Math.min(
+				parsedPayload.replaceLength,
+				maxReplaceChars,
+				suffix.length,
+			);
+			const effectiveSuffix = suffix.slice(replaceLength);
+			const parsedText = finalizeCompletionText(
+				parsedPayload.text,
+				prefix,
+				effectiveSuffix,
+			);
+			if (parsedText.trim().length === 0 && replaceLength === 0) {
+				return undefined;
+			}
+			return { text: parsedText, replaceLength };
 		} catch (error) {
 			console.error(error);
 			new Notice('Failed to fetch completions. Please verify provider config.');

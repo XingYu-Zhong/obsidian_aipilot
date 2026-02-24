@@ -27,6 +27,7 @@ export function acceptCompletionsOnKeydown(
 		});
 
 		const head = state.selection.main.head;
+		const replaceLength = completionsState.replaceLength;
 		const newHead = head + completionsState.completions.length;
 
 		view.dispatch({
@@ -37,7 +38,7 @@ export function acceptCompletionsOnKeydown(
 			changes: [
 				state.changes({
 					from: head,
-					to: head,
+					to: head + replaceLength,
 					insert: completionsState.completions,
 				}),
 			],

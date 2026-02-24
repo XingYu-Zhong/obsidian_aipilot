@@ -5,3 +5,9 @@
 .textcomplete-completions {
   opacity: 0.5;
 }
+
+.textcomplete-replace-target {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: var(--text-muted);
+}

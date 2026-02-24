@@ -2,6 +2,10 @@ import { Provider } from './api/provider';
 
 export interface TextCompleteSettings {
 	version: string;
+	connectionValidation: {
+		lastSuccessfulProvider?: Provider;
+		lastSuccessfulModel?: string;
+	};
 	providers: {
 		openai: {
 			apiKey?: string;
@@ -23,6 +27,10 @@ export interface TextCompleteSettings {
 			apiKey?: string;
 			baseUrl?: string;
 		};
+		xai: {
+			apiKey?: string;
+			baseUrl?: string;
+		};
 		zenmux: {
 			apiKey?: string;
 			baseUrl?: string;
@@ -40,6 +48,7 @@ export interface TextCompleteSettings {
 		temperature: number;
 		waitTime: number;
 		windowSize: number;
+		replaceWindowSize: number;
 		acceptKey: string;
 		rejectKey: string;
 		ignoredFiles: string[];
