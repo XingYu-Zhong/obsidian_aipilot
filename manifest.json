@@ -1,0 +1,10 @@
+{
+	"id": "obsidian_aipilot",
+	"name": "obsidian_aipilot",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.7",
+  "description": "AI-powered inline completions for Obsidian using AI SDK",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": true
+}

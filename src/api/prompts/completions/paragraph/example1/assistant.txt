@@ -1,0 +1,6 @@
+<LANGUAGE>
+English
+<THOUGHT>
+This paragraph explains about the pigeonhole principle. If there are more pigeons than pigeonholes, then at least one pigeonhole must contain at least two pigeons
+<INSERT>
+at least one pigeonhole must contain at least two pigeons

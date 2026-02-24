@@ -1,0 +1,37 @@
+{
+  "ts-node": {
+    // For scraping CLI scripts
+    "compilerOptions": {
+      "module": "CommonJS"
+    }
+  },
+  "compilerOptions": {
+    "baseUrl": ".",
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "module": "ESNext",
+    "target": "ES2018",
+    "allowJs": true,
+    "noImplicitAny": true,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "isolatedModules": true,
+    "strictNullChecks": true,
+    "lib": ["DOM", "ES2018"],
+    "jsx": "react-jsx",
+    // For loading model JSON files.
+    "resolveJsonModule": true,
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": [
+    "src/chat/**",
+    "src/api/clients/**",
+    "src/api/providers/**",
+    "src/settings/migrators/**",
+    "src/settings/versions/**",
+    "src/scripts/**",
+    "src/api/proxies/usage-monitor.ts",
+    "src/settings/runner.ts"
+  ]
+}

@@ -1,22 +1,52 @@
-### AL ###
-#Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
+# IDE and Editors
 .vscode/
-#Cache folder
-.alcache/
-#Symbols folder
-.alpackages/
-#Snapshots folder
-.snapshots/
-#Testing Output folder
-.output/
-#Extension App-file
-*.app
-#Rapid Application Development File
-rad.json
-#Translation Base-file
-*.g.xlf
-#License-file
-*.flf
-#Test results file
-TestResults.xml
+*.iml
+.idea/
+
+# Dependency directories
+node_modules/
+
+# Node.js and NPM/Yarn Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build Outputs & Source Maps
+# For Obsidian plugins, compiled files are typically uploaded to GitHub releases
+main.js
+*.map
+dist/
+build/
+
+# Testing
+coverage/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Obsidian Specific
+data.json
+.obsidian/
+
+# macOS Specific
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# Windows Specific
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.cab
+
+# Linux Specific
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*

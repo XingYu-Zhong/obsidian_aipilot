@@ -1,0 +1,5 @@
+Complete the most suitable text at the current cursor position.
+The cursor is inside a Markdown code block in language {{LANGUAGE}}.
+Continue code in {{LANGUAGE}} only.
+Do not complete text outside this code block.
+Do not overlap or repeat adjacent text before/after the cursor.
