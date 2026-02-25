@@ -12,6 +12,9 @@ function stripOuterFence(raw: string): string {
 function tryParseJSONObject(value: string): SuggestionPayloadObject | undefined {
 	try {
 		const parsed = JSON.parse(value) as unknown;
+		if (typeof parsed === 'string') {
+			return tryParseJSONObject(parsed);
+		}
 		if (
 			typeof parsed === 'object' &&
 			parsed !== null &&
@@ -26,6 +29,15 @@ function tryParseJSONObject(value: string): SuggestionPayloadObject | undefined 
 	} catch {
 		return undefined;
 	}
+}
+
+function normalizeEscapedJSONLike(value: string): string {
+	return value
+		.replace(/\\"/g, '"')
+		.replace(/\\'/g, "'")
+		.replace(/\\n/g, '\n')
+		.replace(/\\r/g, '\r')
+		.replace(/\\t/g, '\t');
 }
 
 function extractBalancedObjectCandidates(
@@ -168,6 +180,27 @@ function resolvePayloadObject(raw: string): SuggestionPayloadObject | undefined 
 		const parsed = tryParseJSONObject(candidate);
 		if (parsed !== undefined) {
 			return parsed;
+		}
+	}
+
+	const normalizedEscaped = normalizeEscapedJSONLike(unfenced);
+	if (normalizedEscaped !== unfenced) {
+		const directEscaped = tryParseJSONObject(normalizedEscaped);
+		if (directEscaped !== undefined) {
+			return directEscaped;
+		}
+
+		const escapedCandidates = extractBalancedObjectCandidates(normalizedEscaped);
+		for (const candidate of escapedCandidates) {
+			const parsed = tryParseJSONObject(candidate);
+			if (parsed !== undefined) {
+				return parsed;
+			}
+		}
+
+		const looseEscaped = extractLoosePayload(normalizedEscaped);
+		if (looseEscaped !== undefined) {
+			return looseEscaped;
 		}
 	}
 

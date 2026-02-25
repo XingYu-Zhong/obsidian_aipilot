@@ -99,7 +99,7 @@ export default class TextComplete extends Plugin {
 
 		this.addCommand({
 			id: 'replace-selected-term-in-current-paragraph',
-			name: 'Text edit: edit selected text (AI)',
+			name: 'Text edit: edit selected text (LLM)',
 			editorCallback: (editor) => {
 				replaceSelectedTermInCurrentParagraph(
 					this.app,

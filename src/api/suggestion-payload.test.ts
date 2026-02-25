@@ -76,4 +76,24 @@ describe('parseSuggestionPayload', () => {
 			replaceLength: 0,
 		});
 	});
+
+	test('extracts payload when JSON object is embedded inside normal text', () => {
+		const raw =
+			'npm install @llm{"replace":0,"text":"npm install @ai-sdk/openai # OpenAI\\nnpm install @ai-sdk/anthropic # Anthropic"}-sdk/openai';
+		const suggestion = parseSuggestionPayload(raw, 24, parsePlainText);
+		expect(suggestion).toEqual({
+			text: 'npm install @ai-sdk/openai # OpenAI\nnpm install @ai-sdk/anthropic # Anthropic',
+			replaceLength: 0,
+		});
+	});
+
+	test('extracts payload from backslash-escaped json-like content', () => {
+		const raw =
+			'{\\"replace\\":0,\\"text\\":\\"npm install @ai-sdk/openai # OpenAI\\\\nnpm install @ai-sdk/anthropic # Anthropic\\"}';
+		const suggestion = parseSuggestionPayload(raw, 24, parsePlainText);
+		expect(suggestion).toEqual({
+			text: 'npm install @ai-sdk/openai # OpenAI\nnpm install @ai-sdk/anthropic # Anthropic',
+			replaceLength: 0,
+		});
+	});
 });

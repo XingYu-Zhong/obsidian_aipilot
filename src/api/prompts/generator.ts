@@ -47,12 +47,15 @@ const INPUT_SCHEMA = [
 const TASK_PROTOCOL = [
 	'TASK PROTOCOL:',
 	'- First decide mode automatically:',
-	'- Use EDIT MODE only when edit_instruction is non-empty.',
+	'- Use EDIT MODE when edit_instruction is non-empty.',
+	'- Also use EDIT MODE when recent_edits indicate active replacement/rename/refactor intent near the cursor.',
 	'- Otherwise use COMPLETION MODE.',
 	'- Use recent_edits as high-priority evidence of user intent and writing direction.',
 	'- In COMPLETION MODE: continue naturally from cursor and always set replace=0.',
 	'- In EDIT MODE: follow edit_instruction and edit within EDIT_TARGET_SUFFIX.',
 	'- In EDIT MODE: replace should normally equal MAX_REPLACE_CHARS.',
+	'- In EDIT MODE: infer rename mappings from edit_instruction and local context (for example, source term -> target term), then apply the mapping consistently across all relevant occurrences in EDIT_TARGET_SUFFIX.',
+	'- In EDIT MODE: keep terminology, identifiers, and package/path fragments consistent; do not mix old and new terms for the same concept unless context clearly requires a different term.',
 	'- In EDIT MODE: preserve unaffected context and output only edited replacement text.',
 ].join('\n');
 

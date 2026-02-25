@@ -6,6 +6,44 @@ function getDocumentEnd(editor: Editor): EditorPosition {
 	return { line: lastLine, ch: editor.getLine(lastLine).length };
 }
 
+function isBlankLine(line: string): boolean {
+	return line.trim() === '';
+}
+
+function getParagraphEnd(editor: Editor, anchor: EditorPosition): EditorPosition {
+	const documentEnd = getDocumentEnd(editor);
+	let line = Math.min(Math.max(anchor.line, 0), documentEnd.line);
+
+	while (line < documentEnd.line) {
+		const nextLine = editor.getLine(line + 1);
+		if (isBlankLine(nextLine)) {
+			break;
+		}
+		line += 1;
+	}
+
+	return { line, ch: editor.getLine(line).length };
+}
+
+function advancePositionByText(
+	start: EditorPosition,
+	text: string,
+): EditorPosition {
+	let line = start.line;
+	let ch = start.ch;
+
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] === '\n') {
+			line += 1;
+			ch = 0;
+			continue;
+		}
+		ch += 1;
+	}
+
+	return { line, ch };
+}
+
 class EditInstructionModal extends Modal {
 	private instruction = '';
 
@@ -74,7 +112,8 @@ export function replaceSelectedTermInCurrentParagraph(
 	const to = editor.getCursor('to');
 	const prefix = editor.getRange({ line: 0, ch: 0 }, from);
 	const selectedText = editor.getRange(from, to);
-	const suffixAfterSelection = editor.getRange(to, getDocumentEnd(editor));
+	const paragraphEnd = getParagraphEnd(editor, to);
+	const editableSuffix = editor.getRange(from, paragraphEnd);
 
 	new EditInstructionModal(app, (instruction) => {
 		if (instruction === '') {
@@ -83,21 +122,24 @@ export function replaceSelectedTermInCurrentParagraph(
 		}
 
 		void (async () => {
-				const suggestion = await client.fetchCompletions(
-					prefix,
-					`${selectedText}${suffixAfterSelection}`,
-					{
-						instruction,
-						maxReplaceChars: selectedText.length,
-					},
-				);
+			const suggestion = await client.fetchCompletions(prefix, editableSuffix, {
+				instruction,
+				maxReplaceChars: editableSuffix.length,
+			});
 			if (suggestion === undefined) {
 				new Notice('No edit suggestion returned.');
 				return;
 			}
 
-			editor.replaceRange(suggestion.text, from, to);
-			new Notice('Applied AI text edit to selection.');
+			const replaceLength = Math.min(
+				editableSuffix.length,
+				Math.max(selectedText.length, suggestion.replaceLength),
+			);
+			const replaceSource = editableSuffix.slice(0, replaceLength);
+			const replaceTo = advancePositionByText(from, replaceSource);
+
+			editor.replaceRange(suggestion.text, from, replaceTo);
+			new Notice('Applied LLM text edit to selection.');
 		})();
 	}).open();
 }

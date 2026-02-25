@@ -298,25 +298,105 @@ function isProtocolEchoLeak(text: string): boolean {
 	return markers.some((marker) => text.includes(marker));
 }
 
+function containsPayloadEcho(text: string): boolean {
+	return /[{][\s\S]{0,240}["']replace["']\s*:[\s\S]{0,800}["']text["']\s*:/.test(
+		text,
+	);
+}
+
+function sanitizeNestedPayloadEcho(text: string): string {
+	let current = text;
+	for (let i = 0; i < 2; i++) {
+		if (!containsPayloadEcho(current)) {
+			return current;
+		}
+		const reparsed = parseSuggestionPayload(current, 0, (content) => content);
+		if (reparsed.text.trim() === '' || reparsed.text === current) {
+			return current;
+		}
+		current = reparsed.text;
+	}
+	return current;
+}
+
 function resolveMaxReplaceChars(
 	settings: TextCompleteSettings,
 	task: SuggestionTask | undefined,
 	suffix: string,
 ): number {
 	const hasEditInstruction = (task?.instruction?.trim() ?? '') !== '';
+	const hasImplicitEditIntent =
+		!hasEditInstruction && inferEditIntentFromRecentEdits(task);
 
 	if (task?.maxReplaceChars != null) {
 		return Math.max(0, Math.min(Math.floor(task.maxReplaceChars), suffix.length));
 	}
-	if (!hasEditInstruction) {
+	if (!hasEditInstruction && !hasImplicitEditIntent) {
 		// Inline completion should be append-only by default.
 		// Replacement is reserved for explicit edit-instruction tasks.
 		return 0;
+	}
+	if (hasImplicitEditIntent) {
+		const inferredReplaceWindow = Math.max(
+			Math.floor(settings.completions.replaceWindowSize),
+			Math.floor(settings.completions.windowSize / 2),
+		);
+		return Math.max(0, Math.min(inferredReplaceWindow, suffix.length));
 	}
 	return Math.max(
 		0,
 		Math.min(Math.floor(settings.completions.replaceWindowSize), suffix.length),
 	);
+}
+
+function inferEditIntentFromRecentEdits(task: SuggestionTask | undefined): boolean {
+	const recentEdits = task?.recentEdits?.trim();
+	if (recentEdits === '' || recentEdits === undefined) {
+		return false;
+	}
+
+	for (const line of recentEdits.split('\n')) {
+		const deletedMarker = 'deleted=';
+		const insertedMarker = ' inserted=';
+		const deletedIndex = line.indexOf(deletedMarker);
+		const insertedIndex = line.indexOf(insertedMarker);
+
+		if (
+			deletedIndex === -1 ||
+			insertedIndex === -1 ||
+			insertedIndex <= deletedIndex + deletedMarker.length
+		) {
+			continue;
+		}
+
+		const deletedLiteral = line
+			.slice(deletedIndex + deletedMarker.length, insertedIndex)
+			.trim();
+		const insertedLiteral = line
+			.slice(insertedIndex + insertedMarker.length)
+			.trim();
+
+		let deleted: unknown;
+		let inserted: unknown;
+		try {
+			deleted = JSON.parse(deletedLiteral);
+			inserted = JSON.parse(insertedLiteral);
+		} catch {
+			continue;
+		}
+
+		if (
+			typeof deleted === 'string' &&
+			typeof inserted === 'string' &&
+			deleted !== '' &&
+			inserted !== '' &&
+			deleted !== inserted
+		) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 function getProviderConfig(settings: TextCompleteSettings, provider: Provider) {
@@ -392,6 +472,9 @@ export class AISDKClient implements APIClient {
 	) {
 		const { settings } = this.plugin;
 		const hasEditInstruction = (task?.instruction?.trim() ?? '') !== '';
+		const hasImplicitEditIntent =
+			!hasEditInstruction && inferEditIntentFromRecentEdits(task);
+		const isEditMode = hasEditInstruction || hasImplicitEditIntent;
 		const maxReplaceChars = resolveMaxReplaceChars(settings, task, suffix);
 
 		try {
@@ -416,15 +499,16 @@ export class AISDKClient implements APIClient {
 					parsedPayload.text,
 					prefix,
 					effectiveSuffix,
-					hasEditInstruction,
+					isEditMode,
 				);
-				if (isProtocolEchoLeak(parsedText)) {
+				const sanitizedText = sanitizeNestedPayloadEcho(parsedText);
+				if (isProtocolEchoLeak(sanitizedText) || containsPayloadEcho(sanitizedText)) {
 					return undefined;
 				}
-				if (parsedText.trim().length === 0 && replaceLength === 0) {
+				if (sanitizedText.trim().length === 0 && replaceLength === 0) {
 					return undefined;
 				}
-				return { text: parsedText, replaceLength };
+				return { text: sanitizedText, replaceLength };
 			}
 
 			const model = resolveModel(settings);
@@ -451,15 +535,16 @@ export class AISDKClient implements APIClient {
 				parsedPayload.text,
 				prefix,
 				effectiveSuffix,
-				hasEditInstruction,
+				isEditMode,
 			);
-			if (isProtocolEchoLeak(parsedText)) {
+			const sanitizedText = sanitizeNestedPayloadEcho(parsedText);
+			if (isProtocolEchoLeak(sanitizedText) || containsPayloadEcho(sanitizedText)) {
 				return undefined;
 			}
-			if (parsedText.trim().length === 0 && replaceLength === 0) {
+			if (sanitizedText.trim().length === 0 && replaceLength === 0) {
 				return undefined;
 			}
-			return { text: parsedText, replaceLength };
+			return { text: sanitizedText, replaceLength };
 		} catch (error) {
 			console.error(error);
 			new Notice('Failed to fetch completions. Please verify provider config.');
