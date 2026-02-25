@@ -174,10 +174,55 @@ function normalizeListLineBreaks(text: string): string {
 	return normalized;
 }
 
+function isListMarkerLine(line: string): boolean {
+	return /^[ \t]*(?:\d+\.\s+|[-*+]\s+(?:\[[ xX]\]\s+)?)\S?/.test(line);
+}
+
+function coerceFirstLineToListItem(text: string, style: ListStyle): string {
+	const lines = text.split('\n');
+	const firstIndex = lines.findIndex((line) => line.trim() !== '');
+	if (firstIndex < 0) {
+		return text;
+	}
+
+	const firstLine = lines[firstIndex];
+	if (isListMarkerLine(firstLine)) {
+		return text;
+	}
+
+	let content = firstLine.trim().replace(/^#{1,6}\s+/, '');
+	if (content === '') {
+		return text;
+	}
+	content = content.replace(/^(\d+\.\s+|[-*+]\s+(\[[ xX]\]\s+)?)/, '');
+
+	switch (style.kind) {
+		case 'ordered':
+			lines[firstIndex] = `${style.indent}${Math.max(1, style.baseNumber + 1)}. ${content}`;
+			break;
+		case 'unordered':
+			lines[firstIndex] = `${style.indent}${style.marker} ${content}`;
+			break;
+		case 'task':
+			lines[firstIndex] = `${style.indent}${style.marker} [ ] ${content}`;
+			break;
+	}
+
+	return lines.join('\n');
+}
+
+function keepFirstSuggestionLine(text: string): string {
+	const startsWithNewline = text.startsWith('\n');
+	const body = startsWithNewline ? text.slice(1) : text;
+	const firstLine = body.split('\n')[0] ?? '';
+	return startsWithNewline ? `\n${firstLine}` : firstLine;
+}
+
 function normalizeCompletionByContext(
 	text: string,
 	prefix: string,
 	suffix: string,
+	isExplicitEdit: boolean,
 ): string {
 	let normalized = text;
 	const context = getContext(prefix, suffix);
@@ -209,14 +254,28 @@ function normalizeCompletionByContext(
 				normalized = `\n${normalized}`;
 			}
 			normalized = normalizeListCompletion(normalized, style);
+			normalized = coerceFirstLineToListItem(normalized, style);
+		}
+		if (!isExplicitEdit) {
+			normalized = keepFirstSuggestionLine(normalized);
 		}
 	}
 
 	return normalized;
 }
 
-function finalizeCompletionText(text: string, prefix: string, suffix: string): string {
-	const contextual = normalizeCompletionByContext(text, prefix, suffix);
+function finalizeCompletionText(
+	text: string,
+	prefix: string,
+	suffix: string,
+	isExplicitEdit: boolean,
+): string {
+	const contextual = normalizeCompletionByContext(
+		text,
+		prefix,
+		suffix,
+		isExplicitEdit,
+	);
 	const deOverlapped = trimByCursorBoundary(contextual, prefix, suffix);
 	return deOverlapped;
 }
@@ -244,8 +303,15 @@ function resolveMaxReplaceChars(
 	task: SuggestionTask | undefined,
 	suffix: string,
 ): number {
+	const hasEditInstruction = (task?.instruction?.trim() ?? '') !== '';
+
 	if (task?.maxReplaceChars != null) {
 		return Math.max(0, Math.min(Math.floor(task.maxReplaceChars), suffix.length));
+	}
+	if (!hasEditInstruction) {
+		// Inline completion should be append-only by default.
+		// Replacement is reserved for explicit edit-instruction tasks.
+		return 0;
 	}
 	return Math.max(
 		0,
@@ -325,6 +391,7 @@ export class AISDKClient implements APIClient {
 		task?: SuggestionTask,
 	) {
 		const { settings } = this.plugin;
+		const hasEditInstruction = (task?.instruction?.trim() ?? '') !== '';
 		const maxReplaceChars = resolveMaxReplaceChars(settings, task, suffix);
 
 		try {
@@ -349,6 +416,7 @@ export class AISDKClient implements APIClient {
 					parsedPayload.text,
 					prefix,
 					effectiveSuffix,
+					hasEditInstruction,
 				);
 				if (isProtocolEchoLeak(parsedText)) {
 					return undefined;
@@ -383,6 +451,7 @@ export class AISDKClient implements APIClient {
 				parsedPayload.text,
 				prefix,
 				effectiveSuffix,
+				hasEditInstruction,
 			);
 			if (isProtocolEchoLeak(parsedText)) {
 				return undefined;

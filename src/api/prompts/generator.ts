@@ -47,10 +47,10 @@ const INPUT_SCHEMA = [
 const TASK_PROTOCOL = [
 	'TASK PROTOCOL:',
 	'- First decide mode automatically:',
-	'- Use EDIT MODE when edit_instruction is non-empty, or when a short replacement in EDIT_TARGET_SUFFIX is clearly needed.',
+	'- Use EDIT MODE only when edit_instruction is non-empty.',
 	'- Otherwise use COMPLETION MODE.',
 	'- Use recent_edits as high-priority evidence of user intent and writing direction.',
-	'- In COMPLETION MODE: continue naturally from cursor and usually set replace=0.',
+	'- In COMPLETION MODE: continue naturally from cursor and always set replace=0.',
 	'- In EDIT MODE: follow edit_instruction and edit within EDIT_TARGET_SUFFIX.',
 	'- In EDIT MODE: replace should normally equal MAX_REPLACE_CHARS.',
 	'- In EDIT MODE: preserve unaffected context and output only edited replacement text.',
@@ -193,6 +193,7 @@ export class PromptGenerator {
 		const { settings } = this.plugin;
 
 		const context = getContext(prefix, suffix);
+		const hasEditInstruction = (task.instruction?.trim() ?? '') !== '';
 		const legacyContextGuideline = stripLegacyFormatInstructions(
 			context === 'code-block'
 				? COMPLETIONS_SYSTEM_PROMPTS[context].replace(
@@ -202,10 +203,9 @@ export class PromptGenerator {
 				: COMPLETIONS_SYSTEM_PROMPTS[context],
 		);
 
-		const configuredMaxReplaceChars = Math.max(
-			0,
-			settings.completions.replaceWindowSize,
-		);
+		const configuredMaxReplaceChars = hasEditInstruction
+			? Math.max(0, settings.completions.replaceWindowSize)
+			: 0;
 		const requestedMaxReplaceChars = task.maxReplaceChars ?? configuredMaxReplaceChars;
 		const maxReplaceChars = Math.max(0, Math.floor(requestedMaxReplaceChars));
 

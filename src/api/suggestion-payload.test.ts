@@ -57,6 +57,14 @@ describe('parseSuggestionPayload', () => {
 		});
 	});
 
+	test('does not treat replace-only object as valid payload', () => {
+		const suggestion = parseSuggestionPayload('{"replace":9}', 24, parsePlainText);
+		expect(suggestion).toEqual({
+			text: 'PLAIN:{"replace":9}',
+			replaceLength: 0,
+		});
+	});
+
 	test('falls back to plain text parser when payload is absent', () => {
 		const suggestion = parseSuggestionPayload(
 			'const value = { foo: 1 };',

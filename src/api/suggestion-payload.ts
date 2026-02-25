@@ -18,7 +18,7 @@ function tryParseJSONObject(value: string): SuggestionPayloadObject | undefined 
 			!Array.isArray(parsed)
 		) {
 			const record = parsed as SuggestionPayloadObject;
-			if ('replace' in record || 'text' in record) {
+			if ('text' in record) {
 				return record;
 			}
 		}
@@ -143,7 +143,7 @@ function extractLooseQuotedValue(raw: string, key: string): string | undefined {
 function extractLoosePayload(raw: string): SuggestionPayloadObject | undefined {
 	const replaceMatch = raw.match(/["']replace["']\s*:\s*(-?\d+)/);
 	const text = extractLooseQuotedValue(raw, 'text');
-	if (replaceMatch === null && text === undefined) {
+	if (text === undefined) {
 		return undefined;
 	}
 
