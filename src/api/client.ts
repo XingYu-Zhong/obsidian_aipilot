@@ -4,12 +4,12 @@ import TextComplete from 'src/main';
 import {
 	APIClient,
 	ConnectionResult,
-	InlineSuggestion,
 	SuggestionTask,
 } from '.';
 import { getContext } from './prompts/context';
 import { PromptGenerator } from './prompts/generator';
 import { Provider, resolveModel } from './provider';
+import { parseSuggestionPayload } from './suggestion-payload';
 import { TextCompleteSettings } from 'src/types';
 
 function getErrorMessage(error: unknown): string {
@@ -221,34 +221,22 @@ function finalizeCompletionText(text: string, prefix: string, suffix: string): s
 	return deOverlapped;
 }
 
-function parseSuggestionPayload(
-	raw: string,
-	maxReplaceChars: number,
-	parsePlainText: (content: string) => string,
-): InlineSuggestion {
-	const unfenced = raw.replace(/^```[\w-]*\n?/, '').replace(/\n?```\s*$/, '').trim();
-	const jsonMatch = unfenced.match(/\{[\s\S]*\}/);
-	if (jsonMatch !== null) {
-		try {
-			const payload = JSON.parse(jsonMatch[0]) as {
-				replace?: unknown;
-				text?: unknown;
-			};
-			const replaceRaw = Number(payload.replace ?? 0);
-			const replaceLength = Number.isFinite(replaceRaw)
-				? Math.max(0, Math.min(maxReplaceChars, Math.floor(replaceRaw)))
-				: 0;
-			const text = typeof payload.text === 'string' ? payload.text : '';
-			return { text, replaceLength };
-		} catch {
-			// Fall through to plain text parser.
-		}
+function isProtocolEchoLeak(text: string): boolean {
+	if (text.trim() === '') {
+		return false;
 	}
 
-	return {
-		text: parsePlainText(raw),
-		replaceLength: 0,
-	};
+	const markers = [
+		'OUTPUT PROTOCOL:',
+		'INPUT SCHEMA:',
+		'TASK PROTOCOL:',
+		'TASK INPUT:',
+		'<<<PREFIX',
+		'<<<SUFFIX',
+		'<<<EDIT_TARGET_SUFFIX',
+		'Now return JSON only.',
+	];
+	return markers.some((marker) => text.includes(marker));
 }
 
 function resolveMaxReplaceChars(
@@ -362,6 +350,9 @@ export class AISDKClient implements APIClient {
 					prefix,
 					effectiveSuffix,
 				);
+				if (isProtocolEchoLeak(parsedText)) {
+					return undefined;
+				}
 				if (parsedText.trim().length === 0 && replaceLength === 0) {
 					return undefined;
 				}
@@ -375,7 +366,6 @@ export class AISDKClient implements APIClient {
 				prompt,
 				maxOutputTokens: settings.completions.maxTokens,
 				temperature: settings.completions.temperature,
-				stopSequences: ['\n\n\n'],
 			});
 
 			const parsedPayload = parseSuggestionPayload(
@@ -394,6 +384,9 @@ export class AISDKClient implements APIClient {
 				prefix,
 				effectiveSuffix,
 			);
+			if (isProtocolEchoLeak(parsedText)) {
+				return undefined;
+			}
 			if (parsedText.trim().length === 0 && replaceLength === 0) {
 				return undefined;
 			}
